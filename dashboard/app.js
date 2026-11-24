@@ -33,7 +33,7 @@
   // The multipliers are the row's own stored values, rounded the same way main.ts rounds
   // them, so the recomputation lands on the same dollar.
   function impliedOf(row, model) {
-    return Math.max(1, Math.round(row.tvl_usd * row.category_multiple * row.growth_multiplier * row.maturity_multiplier));
+    return Math.max(1, Math.round(row.tvl_usd * row.category_multiple * row.size_factor * row.growth_multiplier * row.launch_multiplier * row.stablecoin_discount));
   }
 
   function el(tag, attrs) {
@@ -82,6 +82,7 @@
     var c = (p.category || '').toLowerCase();
     var name = p.name;
     if (c.indexOf('lend') >= 0 || c.indexOf('cdp') >= 0 || c.indexOf('collateral') >= 0) return 'Supply $' + capital + ' of USDC to ' + name + ' on ' + chain + ' and keep the loan-to-value under 50%.';
+    if (c.indexOf('index') >= 0) return 'Buy $' + capital + ' of ' + name + "'s index on " + chain + ' and hold the shares.';
     if (c.indexOf('dex') >= 0 || c.indexOf('liquidity manager') >= 0) return 'Provide $' + capital + ' of liquidity to ' + name + "'s main pool on " + chain + ' in a narrow range and keep the position open.';
     if (c.indexOf('yield aggregator') >= 0) return 'Deposit $' + capital + " of USDC into " + name + "'s highest-TVL vault on " + chain + ' and let it auto-compound.';
     if (c.indexOf('yield') >= 0 || c.indexOf('leveraged farm') >= 0) return 'Deposit $' + capital + ' into ' + name + "'s main yield strategy on " + chain + ' and keep the position open.';
@@ -97,12 +98,47 @@
     if (c.indexOf('governance') >= 0) return 'Lock $' + capital + " of the accepted asset in " + name + "'s incentives program on " + chain + ' and vote once.';
     if (c.indexOf('basis') >= 0) return 'Deposit $' + capital + ' into ' + name + "'s basis vault on " + chain + ' and keep the position through one funding cycle.';
     if (c.indexOf('launchpad') >= 0) return 'Commit $' + capital + ' to the next sale on ' + name + ' and complete its allocation steps.';
+    if (c.indexOf('anchor') >= 0) return 'Mint $' + capital + ' of the BTC-backed asset through ' + name + ' on ' + chain + ' and hold it.';
+    if (c.indexOf('card') >= 0) return 'Spend $' + capital + ' through ' + name + "'s card on " + chain + ' and keep the receipts.';
+    if (c.indexOf('decentralized btc') >= 0) return 'Deposit $' + capital + ' of BTC into ' + name + ' on ' + chain + ' and keep the position open.';
     if (c.indexOf('chain') >= 0) return 'Bridge $' + capital + ' of USDC to ' + name + "'s chain and use one of its native apps the same week.";
     if (c.indexOf('privacy') >= 0) return 'Deposit $' + capital + ' into ' + name + "'s shielded pool on " + chain + ' and keep the note.';
-    if (c.indexOf('index') >= 0) return 'Buy $' + capital + ' of ' + name + "'s index token on " + chain + ' and hold it.';
     if (c.indexOf('cedefi') >= 0) return 'Deposit $' + capital + ' into ' + name + "'s managed vault on " + chain + ' and keep the position open.';
     if (c.indexOf('ai') >= 0 || c.indexOf('decentralized ai') >= 0) return 'Deposit $' + capital + ' into ' + name + "'s compute or agent pool on " + chain + ' and keep the position open.';
     return 'Deposit $' + capital + ' of USDC into ' + name + ' on ' + chain + ' and keep the position open.';
+  }
+  function weeklyActionFor(p) {
+    var c = (p.category || '').toLowerCase();
+    if (c.indexOf('lend') >= 0 || c.indexOf('cdp') >= 0 || c.indexOf('collateral') >= 0) return 'Adjust the position or vote on one governance proposal each week.';
+    if (c.indexOf('dex') >= 0 || c.indexOf('liquidity manager') >= 0) return 'Swap once through the pool and re-balance the range each week.';
+    if (c.indexOf('yield aggregator') >= 0) return 'Claim the yield and re-deposit it into the vault each week.';
+    if (c.indexOf('yield') >= 0 || c.indexOf('leveraged farm') >= 0) return 'Claim the yield and re-deposit it into the strategy each week.';
+    if (c.indexOf('bridge') >= 0 || c.indexOf('cross chain') >= 0) return 'Bridge a small amount back and forth each week to keep the route active.';
+    if (c.indexOf('staking') >= 0 || c.indexOf('restak') >= 0) return 'Check the staking rewards and re-stake them each week.';
+    if (c.indexOf('perpetual') >= 0 || c.indexOf('derivative') >= 0 || c.indexOf('options') >= 0) return 'Close and re-open one small hedged trade each week.';
+    if (c.indexOf('prediction') >= 0) return 'Place one new market position each week.';
+    if (c.indexOf('curator') >= 0 || c.indexOf('allocator') >= 0) return "Check the vault's allocation report and re-deposit the yield each week.";
+    if (c.indexOf('stable') >= 0) return 'Check the peg and the yield on the stable asset each week.';
+    if (c.indexOf('rwa') >= 0) return "Check the asset's yield accrual and any new issuance each week.";
+    if (c.indexOf('insurance') >= 0) return 'Check the policy and any new cover options each week.';
+    if (c.indexOf('payment') >= 0) return 'Make one payment through the protocol each week.';
+    if (c.indexOf('governance') >= 0) return 'Vote on one proposal each week.';
+    if (c.indexOf('basis') >= 0) return 'Check the funding rate and keep the basis position through each weekly cycle.';
+    if (c.indexOf('launchpad') >= 0) return 'Check for new sales and complete any allocation steps each week.';
+    if (c.indexOf('chain') >= 0) return 'Use one native app on the chain each week.';
+    if (c.indexOf('privacy') >= 0) return "Check the shielded pool's yield each week.";
+    if (c.indexOf('index') >= 0) return 'Check the index rebalance and hold the shares each week.';
+    if (c.indexOf('cedefi') >= 0) return "Check the managed vault's report each week.";
+    if (c.indexOf('ai') >= 0 || c.indexOf('decentralized ai') >= 0) return "Check the compute pool's rewards each week.";
+    return 'Make one qualifying action each week, such as a deposit, a borrow, a swap or a vote.';
+  }
+  function claimCheckFor(p) {
+    var c = (p.category || '').toLowerCase();
+    if (c.indexOf('lend') >= 0 || c.indexOf('cdp') >= 0 || c.indexOf('collateral') >= 0 || c.indexOf('curator') >= 0 || c.indexOf('allocator') >= 0) return "open the protocol's rewards page and check the supply and borrow points";
+    if (c.indexOf('dex') >= 0 || c.indexOf('liquidity manager') >= 0) return "open the protocol's LP rewards and points page";
+    if (c.indexOf('yield') >= 0 || c.indexOf('leveraged farm') >= 0) return "open the vault's rewards page and check the points balance";
+    if (c.indexOf('staking') >= 0 || c.indexOf('restak') >= 0) return 'open the staking dashboard and check the accrued rewards';
+    return "open the protocol's own points or rewards page";
   }
   function stepText(step) {
     var s = step.text + ' Cost: ' + step.cost + '. Time: ' + step.time + '.';
@@ -120,9 +156,9 @@
       { text: 'Use a fresh wallet that holds only the funds you plan to farm, and keep its seed phrase offline.', cost: 'no cost to create; under $3 of gas for the first transaction', time: '5 minutes' },
       { text: 'Move $' + capital + ' of USDC onto ' + chain + ' from an exchange or a bridge you already trust.', cost: 'about $' + bridgeGas + ' of gas to bridge', time: '10 minutes' },
       { text: actionFor(p, capital, chain), cost: '$' + capital + ' of capital and about $' + gas + ' of gas', time: '15 minutes to set up' },
-      { text: 'Make one qualifying action each week, such as a deposit, a borrow, a swap or a vote.', cost: 'about $' + gas + ' of gas a week', time: '10 minutes a week' },
+      { text: weeklyActionFor(p), cost: 'about $' + gas + ' of gas a week', time: '10 minutes a week' },
       { text: 'Hold the position for at least ' + hold + ' days so the activity is counted in more than one snapshot.', cost: 'the $' + capital + ' stays in the position', time: hold + ' days' },
-      { text: "Before you withdraw, open the protocol's own points or rewards page and claim only from the link it publishes.", cost: 'no fee to check, and never pay to claim', time: '10 minutes' },
+      { text: 'Before you withdraw, ' + claimCheckFor(p) + ' and claim only from the link it publishes.', cost: 'no fee to check, and never pay to claim', time: '10 minutes' },
       { text: 'Write the wallet, the dates and every transaction in a farm log so you can repeat the position or unwind it.', cost: 'nothing but the log', time: '5 minutes' }
     ].map(stepText);
   }
@@ -195,7 +231,7 @@
         el('p', { text: 'The watchlist is the floor: every protocol with at least $' + Math.round(DATA.floor_usd / 1e6) + 'M of TVL and no token on record. The early radar adds ' + DATA.early_size + ' pre-token protocols below that floor, each screened by the same rule. Implied value is a model, not a promise.' })
       ),
       el('div', { class: 'facts' },
-        el('div', { class: 'fact' }, el('span', { text: 'Watchlist covered' }), el('b', { text: DATA.watchlist_size + ' / ' + DATA.watchlist_size })),
+        el('div', { class: 'fact' }, el('span', { text: 'Top implied value' }), el('b', { text: fmtUsd(DATA.rows[0].implied_value_usd) })),
         el('div', { class: 'fact' }, el('span', { text: 'Pre-token rows scored' }), el('b', { text: String(DATA.board_size) })),
         el('div', { class: 'fact' }, el('span', { text: 'Early rows below the floor' }), el('b', { text: String(DATA.early_size) })),
         el('div', { class: 'fact' }, el('span', { text: 'Live-token protocols set aside' }), el('b', { text: String(DATA.live_size) }))
@@ -255,7 +291,7 @@
         el('button', { class: 'button', type: 'button', text: 'Clear filters', onclick: function () { state.q = ''; state.category = 'all'; state.chain = 'all'; state.minTvl = 0; writeHash(); render(); } })
       ));
     }
-    var max = list[0].implied_value_usd || 1;
+    var max = list.reduce(function (m, r) { return Math.max(m, r.implied_value_usd); }, 1);
     var tbody = el('tbody');
     list.forEach(function (r) {
       var growth = r.change_7d === null ? 'n/a' : fmtPct(r.change_7d);
@@ -331,22 +367,25 @@
       return el('tr', null,
         el('td', { text: c.category }),
         el('td', { class: 'num', text: String(c.live_count) }),
+        el('td', { class: 'num', text: fmtUsd(c.median_tvl_usd) }),
         el('td', { class: 'num', text: 'x' + c.multiple.toFixed(3) })
       );
     });
     multRows.push(el('tr', null,
       el('td', { text: 'Global median (fallback)' }),
       el('td', { class: 'num', text: 'all live' }),
+      el('td', { class: 'num', text: fmtUsd(cal.global_median_tvl_usd) }),
       el('td', { class: 'num', text: 'x' + cal.global_multiple.toFixed(3) })
     ));
     return el('section', { class: 'panel model' },
       el('h2', { text: 'How implied value is computed' }),
       el('p', { class: 'sub', text: 'Every row is scored by one function of the snapshot figures. No protocol name is special-cased, and no row is hand-picked. The category multiple is the market talking: the median market-cap / TVL of the live-token protocols in that category, read from this same snapshot.' }),
       el('div', { class: 'formula' },
-        'implied = round( tvl_usd x category_multiple x (1 + clamp(change_7d, ' + m.growth_floor + ', ' + m.growth_cap + ') / 100 x ' + m.growth_weight + ') x (' + m.maturity_floor + ' + min(age_days, ' + m.maturity_days + ') / ' + m.maturity_days + ' x ' + m.maturity_range + ') )'
+        'implied = round( tvl_usd x category_multiple x size_factor x (1 + clamp(change_7d, ' + m.growth_floor + ', ' + m.growth_cap + ') / 100 x ' + m.growth_weight + ') x launch_window(age_days) x stablecoin_discount )'
       ),
+      el('p', { class: 'sub', text: 'Size factor: the multiple shrinks as a protocol gets bigger. Across the live-token protocols in this snapshot, log market cap rises with log TVL at a slope of 0.52, so the size factor is (tvl_usd / median live TVL) raised to ' + cal.size_exponent + ', clamped to [' + m.size_floor + ', ' + m.size_cap + ']. A giant is never charged the same multiple per dollar as a small protocol. Launch window: ' + m.launch_young + ' under ' + m.launch_ramp_days + ' days, rising to ' + m.launch_peak + ' at ' + m.launch_peak_age + ' days, then fading to ' + m.launch_old + ' after three-plus years with no token — a protocol that has run that long without one has shown it does not need one. Stablecoin discount ' + m.stablecoin_discount + ': a protocol named as a stablecoin ticker is the stablecoin itself, so only a future governance token is priced.' }),
       el('table', { class: 'mult-table' },
-        el('thead', null, el('tr', null, el('th', { scope: 'col', text: 'Category' }), el('th', { scope: 'col', text: 'Live protocols' }), el('th', { scope: 'col', text: 'Multiple' }))),
+        el('thead', null, el('tr', null, el('th', { scope: 'col', text: 'Category' }), el('th', { scope: 'col', text: 'Live protocols' }), el('th', { scope: 'col', text: 'Median live TVL' }), el('th', { scope: 'col', text: 'Multiple' }))),
         el('tbody', null, multRows)
       ),
       el('p', { class: 'sub', text: 'TVL and seven-day growth come from the snapshot. Age is the time since the protocol was first listed, the best record of how long it has run with no token; an unlisted age uses ' + m.unknown_age_days + ' days. A category with fewer than ' + m.min_live_for_category + ' live protocols falls back to the global median. The early radar is every rankable pre-token protocol below the watchlist floor, by TVL, and the live-token protocols are set aside with their market caps shown.' })
@@ -374,22 +413,26 @@
       el('div', null,
         el('span', { class: 'brand-name', text: 'Rank ' + row.rank + ' of ' + DATA.board_size }),
         el('h2', { id: 'detail-title', text: row.name }),
-        el('p', { class: 'sub', text: (row.category || 'Other') + ' on ' + (row.chains && row.chains.length ? row.chains.join(', ') : 'an unnamed chain') })
+        el('p', { class: 'sub', text: (row.category || 'Other') + ' on ' + (row.chains && row.chains.length ? (row.chains.length > 3 ? row.chains.slice(0, 3).join(', ') + ' and ' + (row.chains.length - 3) + ' more' : row.chains.join(', ')) : 'an unnamed chain') })
       ),
       el('button', { class: 'close', type: 'button', 'aria-label': 'Close details', text: 'Close', onclick: function () { dialog.close(); } })
     ));
+    var boxes = [
+      el('div', null, el('span', { text: 'TVL' }), el('b', { class: 'num', text: fmtUsd(row.tvl_usd) })),
+      el('div', null, el('span', { text: 'Category multiple' }), el('b', { class: 'num', text: 'x' + row.category_multiple.toFixed(3) })),
+      el('div', null, el('span', { text: 'Size adjustment' }), el('b', { class: 'num', text: 'x' + row.size_factor.toFixed(2) })),
+      el('div', null, el('span', { text: 'Seven-day growth' }), el('b', { class: 'num', text: fmtPct(row.change_7d) })),
+      el('div', null, el('span', { text: 'Age with no token' }), el('b', { class: 'num', text: fmtAge(row.age_days) })),
+      el('div', null, el('span', { text: 'Growth multiplier' }), el('b', { class: 'num', text: String(row.growth_multiplier) })),
+      el('div', null, el('span', { text: 'Launch-window multiplier' }), el('b', { class: 'num', text: String(row.launch_multiplier) })),
+      el('div', null, el('span', { text: 'Implied value' }), el('b', { class: 'num', text: fmtUsd(row.implied_value_usd) }))
+    ];
+    if (row.stablecoin_discount < 1) boxes.push(el('div', null, el('span', { text: 'Stablecoin discount' }), el('b', { class: 'num', text: 'x' + row.stablecoin_discount })));
     dialog.appendChild(el('section', { class: 'detail-section' },
       el('h3', { text: 'Implied value' }),
-      el('div', { class: 'equation' },
-        el('div', null, el('span', { text: 'TVL' }), el('b', { class: 'num', text: fmtUsd(row.tvl_usd) })),
-        el('div', null, el('span', { text: 'Category multiple' }), el('b', { class: 'num', text: 'x' + row.category_multiple.toFixed(3) })),
-        el('div', null, el('span', { text: 'Seven-day growth' }), el('b', { class: 'num', text: fmtPct(row.change_7d) })),
-        el('div', null, el('span', { text: 'Age with no token' }), el('b', { class: 'num', text: fmtAge(row.age_days) })),
-        el('div', null, el('span', { text: 'Growth multiplier' }), el('b', { class: 'num', text: String(row.growth_multiplier) })),
-        el('div', null, el('span', { text: 'Maturity multiplier' }), el('b', { class: 'num', text: String(row.maturity_multiplier) })),
-        el('div', null, el('span', { text: 'Implied value' }), el('b', { class: 'num', text: fmtUsd(row.implied_value_usd) }))
-      ),
-      el('p', { class: 'sub', text: 'Multiple source: ' + row.multiple_source + '. Model ' + DATA.model_version + ': the same function scores every protocol. The page recomputes this row as ' + fmtUsd(impliedOf(row, DATA.model)) + (impliedOf(row, DATA.model) === row.implied_value_usd ? ', the same number board.json carries.' : ', which differs from the board: the data would be stale.') + ' This is an estimate, not a price.' })
+      el('div', { class: 'equation' }, boxes),
+      el('p', { class: 'why', text: row.why }),
+      el('p', { class: 'sub', text: 'Multiple source: ' + row.multiple_source + '. Size adjustment x' + row.size_factor.toFixed(2) + ': ' + fmtUsd(row.tvl_usd) + ' TVL against a ' + fmtUsd(row.size_reference_tvl_usd) + ' median live TVL. Model ' + DATA.model_version + ': the same function scores every protocol. The page recomputes this row as ' + fmtUsd(impliedOf(row, DATA.model)) + (impliedOf(row, DATA.model) === row.implied_value_usd ? ', the same number board.json carries.' : ', which differs from the board: the data would be stale.') + ' This is an estimate, not a price.' })
     ));
     dialog.appendChild(el('section', { class: 'detail-section' },
       el('h3', { text: 'Farm plan' }),

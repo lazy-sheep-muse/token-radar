@@ -125,7 +125,7 @@ td.num, th.num { text-align: right; }
 .formula {
   background: var(--bg-soft); border: 1px solid var(--line); border-radius: 8px;
   padding: 12px 14px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 13px; line-height: 1.6; overflow-x: auto; margin-bottom: 14px; white-space: nowrap;
+  font-size: 13px; line-height: 1.6; overflow-x: auto; margin-bottom: 14px; overflow-wrap: break-word;
 }
 .mult-table { width: 100%; font-size: 13.5px; margin-bottom: 12px; }
 .mult-table th, .mult-table td { padding: 7px 10px; }
@@ -150,6 +150,7 @@ td.num, th.num { text-align: right; }
 .detail-section { padding: 18px 24px 22px; border-top: 1px solid var(--line-soft); margin-top: 18px; }
 .detail-section:first-of-type { border-top: 0; margin-top: 0; }
 .detail-section h3 { margin: 0 0 12px; font-size: 16px; }
+.why { border-left: 3px solid var(--accent); padding-left: 12px; color: var(--text); font-size: 14px; margin: 0 0 12px; }
 .equation { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 12px; }
 .equation > div { background: var(--bg-soft); border: 1px solid var(--line-soft); border-radius: 8px; padding: 10px 12px; }
 .equation span { display: block; color: var(--muted); font-size: 12px; margin-bottom: 2px; }
