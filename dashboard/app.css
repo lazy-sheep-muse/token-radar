@@ -130,6 +130,14 @@ td.num, th.num { text-align: right; }
 .mult-table { width: 100%; font-size: 13.5px; margin-bottom: 12px; }
 .mult-table th, .mult-table td { padding: 7px 10px; }
 .mult-table td.num { text-align: right; }
+.mix { flex: 1 1 100%; margin: 0; }
+.check { background: var(--bg-soft); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; }
+.check h3 { margin: 0 0 8px; font-size: 15px; }
+.check ul { margin: 0; padding-left: 20px; }
+.check li { margin-bottom: 6px; font-size: 13.5px; color: var(--muted); }
+.comps { list-style: none; margin: 0; padding: 0; }
+.comps li { display: flex; justify-content: space-between; gap: 12px; background: var(--bg-soft); border: 1px solid var(--line-soft); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
+.comps li b { font-weight: 600; }
 
 /* Detail dialog */
 .detail {

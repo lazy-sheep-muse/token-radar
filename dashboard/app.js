@@ -225,6 +225,10 @@
   }
 
   function lede() {
+    var top10 = DATA.rows.slice(0, 10);
+    var mixCount = {};
+    top10.forEach(function (r) { var k = r.category || 'Other'; mixCount[k] = (mixCount[k] || 0) + 1; });
+    var mix = Object.keys(mixCount).sort(function (a, b) { return mixCount[b] - mixCount[a]; }).map(function (k) { return k + ' ' + mixCount[k]; }).join(' · ');
     return el('section', { class: 'lede' },
       el('div', null,
         el('h1', { text: DATA.watchlist_size + ' watchlist protocols, ranked by implied value' }),
@@ -235,7 +239,8 @@
         el('div', { class: 'fact' }, el('span', { text: 'Pre-token rows scored' }), el('b', { text: String(DATA.board_size) })),
         el('div', { class: 'fact' }, el('span', { text: 'Early rows below the floor' }), el('b', { text: String(DATA.early_size) })),
         el('div', { class: 'fact' }, el('span', { text: 'Live-token protocols set aside' }), el('b', { text: String(DATA.live_size) }))
-      )
+      ),
+      el('p', { class: 'sub mix', text: 'Top 10 spans ' + Object.keys(mixCount).length + ' categories: ' + mix + '. No single category carries the board.' })
     );
   }
 
@@ -364,11 +369,14 @@
     var m = DATA.model;
     var cal = DATA.calibration;
     var multRows = cal.by_category.map(function (c) {
+      var used = c.raw_multiple !== undefined && c.raw_multiple !== c.multiple
+        ? 'x' + c.raw_multiple.toFixed(3) + ' → x' + c.multiple.toFixed(3)
+        : 'x' + c.multiple.toFixed(3);
       return el('tr', null,
         el('td', { text: c.category }),
         el('td', { class: 'num', text: String(c.live_count) }),
         el('td', { class: 'num', text: fmtUsd(c.median_tvl_usd) }),
-        el('td', { class: 'num', text: 'x' + c.multiple.toFixed(3) })
+        el('td', { class: 'num', text: used })
       );
     });
     multRows.push(el('tr', null,
@@ -383,10 +391,19 @@
       el('div', { class: 'formula' },
         'implied = round( tvl_usd x category_multiple x size_factor x (1 + clamp(change_7d, ' + m.growth_floor + ', ' + m.growth_cap + ') / 100 x ' + m.growth_weight + ') x launch_window(age_days) x stablecoin_discount )'
       ),
-      el('p', { class: 'sub', text: 'Size factor: the multiple shrinks as a protocol gets bigger. Across the live-token protocols in this snapshot, log market cap rises with log TVL at a slope of 0.52, so the size factor is (tvl_usd / median live TVL) raised to ' + cal.size_exponent + ', clamped to [' + m.size_floor + ', ' + m.size_cap + ']. A giant is never charged the same multiple per dollar as a small protocol. Launch window: ' + m.launch_young + ' under ' + m.launch_ramp_days + ' days, rising to ' + m.launch_peak + ' at ' + m.launch_peak_age + ' days, then fading to ' + m.launch_old + ' after three-plus years with no token — a protocol that has run that long without one has shown it does not need one. Stablecoin discount ' + m.stablecoin_discount + ': a protocol named as a stablecoin ticker is the stablecoin itself, so only a future governance token is priced.' }),
+      el('p', { class: 'sub', text: 'Size factor: the multiple shrinks as a protocol gets bigger. The exponent is the market\u2019s median pairwise slope of log market cap on log TVL across the live-token protocols (Theil-Sen), minus one: ' + cal.size_exponent + '. A median slope, so one 36x outlier cannot move it. The size factor is (tvl_usd / median live TVL) raised to that exponent, clamped to [' + m.size_floor + ', ' + m.size_cap + ']. A giant is never charged the same multiple per dollar as a small protocol. Thin categories borrow strength: a category\u2019s multiple is its own median shrunk toward the global median with weight n / (n + ' + m.shrink_k + ') on the category median, so a category priced by 3 live protocols leans on the global median twice as hard as one priced by 7 — the table shows each category\u2019s median and the multiple actually used. Launch window: ' + m.launch_young + ' under ' + m.launch_ramp_days + ' days, rising to ' + m.launch_peak + ' at ' + m.launch_peak_age + ' days, then fading to ' + m.launch_old + ' after three-plus years with no token — a protocol that has run that long without one has shown it does not need one. Stablecoin discount ' + m.stablecoin_discount + ': a protocol named after the asset it issues is the asset itself, so only a future governance token is priced, and the traded token stays separated from the ones still to come.' }),
       el('table', { class: 'mult-table' },
-        el('thead', null, el('tr', null, el('th', { scope: 'col', text: 'Category' }), el('th', { scope: 'col', text: 'Live protocols' }), el('th', { scope: 'col', text: 'Median live TVL' }), el('th', { scope: 'col', text: 'Multiple' }))),
+        el('thead', null, el('tr', null, el('th', { scope: 'col', text: 'Category' }), el('th', { scope: 'col', text: 'Live protocols' }), el('th', { scope: 'col', text: 'Median live TVL' }), el('th', { scope: 'col', text: 'Multiple (median → used)' }))),
         el('tbody', null, multRows)
+      ),
+      el('div', { class: 'check' },
+        el('h3', { text: 'How to check this board' }),
+        el('ul', null,
+          el('li', { text: 'Coverage: all ' + DATA.watchlist_size + ' watchlist protocols are on the board; the early radar adds ' + DATA.early_size + ' more below the floor.' }),
+          el('li', { text: 'Value: every row\u2019s implied value is TVL x its category multiple x size x growth x launch window. Open any row to see the arithmetic and its closest live comparables.' }),
+          el('li', { text: 'Separation: protocols whose token already trades sit on the Live token tab with their market caps; the board ranks only protocols with no token on record.' }),
+          el('li', { text: 'Farm plans: each row\u2019s plan gives concrete steps with what they cost and how long they take.' })
+        )
       ),
       el('p', { class: 'sub', text: 'TVL and seven-day growth come from the snapshot. Age is the time since the protocol was first listed, the best record of how long it has run with no token; an unlisted age uses ' + m.unknown_age_days + ' days. A category with fewer than ' + m.min_live_for_category + ' live protocols falls back to the global median. The early radar is every rankable pre-token protocol below the watchlist floor, by TVL, and the live-token protocols are set aside with their market caps shown.' })
     );
@@ -434,6 +451,19 @@
       el('p', { class: 'why', text: row.why }),
       el('p', { class: 'sub', text: 'Multiple source: ' + row.multiple_source + '. Size adjustment x' + row.size_factor.toFixed(2) + ': ' + fmtUsd(row.tvl_usd) + ' TVL against a ' + fmtUsd(row.size_reference_tvl_usd) + ' median live TVL. Model ' + DATA.model_version + ': the same function scores every protocol. The page recomputes this row as ' + fmtUsd(impliedOf(row, DATA.model)) + (impliedOf(row, DATA.model) === row.implied_value_usd ? ', the same number board.json carries.' : ', which differs from the board: the data would be stale.') + ' This is an estimate, not a price.' })
     ));
+    if (row.comps && row.comps.length > 0) {
+      var sameCat = row.multiple_source.indexOf('global median') !== 0;
+      dialog.appendChild(el('section', { class: 'detail-section' },
+        el('h3', { text: 'Closest live comparables' }),
+        el('p', { class: 'sub', text: sameCat ? 'The live-token protocols nearest this one by TVL in the same category: their market-cap / TVL is what the multiple is calibrated from.' : 'This category has no live protocols trading, so these are the nearest live protocols in the whole market by TVL: their market-cap / TVL is what the multiple is calibrated from.' }),
+        el('ul', { class: 'comps' }, row.comps.map(function (c) {
+          return el('li', null,
+            el('b', { text: c.name }),
+            el('span', { class: 'num', text: 'x' + c.ratio.toFixed(2) + ' · ' + fmtUsd(c.tvl_usd) + ' TVL' })
+          );
+        }))
+      ));
+    }
     dialog.appendChild(el('section', { class: 'detail-section' },
       el('h3', { text: 'Farm plan' }),
       el('ol', { class: 'steps' }, steps.map(function (s) {
