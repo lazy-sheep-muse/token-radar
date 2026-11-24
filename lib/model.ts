@@ -1,4 +1,4 @@
-// Token Radar model, version radar-3.
+// Token Radar model, version radar-4.
 //
 // One sealed snapshot of the protocol universe in, one ranked board out. The
 // board covers every slug in the snapshot's watchlist (the floor, never a
@@ -13,15 +13,23 @@
 //
 //   multiple   = the median market-cap / TVL of the live-token protocols in
 //                the same category (at least 3 of them), else the median
-//                across every live-token protocol; clamped to [0.05, 1.5]
+//                across every live-token protocol; clamped to [0.05, 1.5].
+//                A thin category borrows strength from the market: the
+//                multiple actually used is shrunk toward the global median
+//                with weight n / (n + 3) on the category's own median, so a
+//                category priced by 3 live protocols leans on the global
+//                median twice as hard as one priced by 7. No single rich
+//                category can carry the top of the board on a handful of
+//                live protocols.
 //   size       = (tvl_usd / median live TVL of the category) raised to the
 //                market's own size exponent, clamped to [0.25, 1.0]: the
 //                snapshot's live protocols show the multiple shrinks as a
-//                protocol gets bigger (log-log slope 0.52 across 128 live
-//                protocols, r = 0.44), so a giant is never charged the same
-//                multiple per dollar as a small protocol. The multiple is
-//                calibrated at the category's median size, so the size
-//                factor only ever discounts, never inflates.
+//                protocol gets bigger. The exponent is the market's median
+//                pairwise slope of log market cap on log TVL (Theil-Sen),
+//                minus one — a median, so one 36x outlier cannot move it —
+//                clamped to [-0.7, -0.1]. The multiple is calibrated at
+//                the category's median size, so the size factor only ever
+//                discounts, never inflates.
 //   growth     = clamp(change_7d, -30, 50) per cent; one week of TVL flow is
 //                mostly noise, so it moves a row by at most -18% / +30%
 //   growthMult = 1 + (growth / 100) x 0.6
@@ -29,11 +37,19 @@
 //                to trust scores 0.90, the window peaks at 1.05 around two
 //                years in, and a protocol that has run three-plus years with
 //                no token has shown it does not need one, fading to 0.80
-//   discount   = 0.25 when the protocol's name is a stablecoin ticker
-//                (USDD): the token already exists and trades, so the board
-//                prices only a possible future governance token
+//   discount   = 0.25 when the protocol is named after the asset it issues
+//                (a stablecoin ticker such as USDD): the token already
+//                exists and trades, so the board prices only a possible
+//                future governance token, and the traded token stays
+//                separated from the ones still to come
 //   implied    = max(1, round(tvl_usd x multiple x size x growthMult x
 //                launch x discount))
+//
+// Every row also names its closest live comparables: the three live-token
+// protocols nearest it by TVL in its own category (or in the whole market
+// when its category has none trading), with their market-cap / TVL, so a
+// reader can check the multiple against the market without taking the
+// model's word for it.
 //
 // The multiples and the size exponent are computed from the snapshot at run
 // time, so the model follows the data it is given. Every row is scored by
@@ -77,6 +93,7 @@ export interface ModelConstants {
   multiple_floor: number;
   multiple_cap: number;
   min_live_for_category: number;
+  shrink_k: number;
   size_floor: number;
   size_cap: number;
   stablecoin_discount: number;
@@ -96,22 +113,25 @@ export const MODEL: ModelConstants = {
   multiple_floor: 0.05,
   multiple_cap: 1.5,
   min_live_for_category: 3,
+  shrink_k: 3,
   size_floor: 0.25,
   size_cap: 1.0,
   stablecoin_discount: 0.25,
 };
 
 /** The model's version label: the dashboard names it. */
-export const MODEL_VERSION = 'radar-3';
+export const MODEL_VERSION = 'radar-4';
 
 /** How many live-token protocols the Live token view carries, by market cap. */
 export const LIVE_ROWS = 24;
 
-/** One calibrated multiple: which category, how many live protocols priced it, the value, and the TVL it was priced at. */
+/** One calibrated multiple: which category, how many live protocols priced it, the raw median, the shrunk multiple actually used, and the TVL it was priced at. */
 export interface CategoryMultiple {
   category: string;
   live_count: number;
   multiple: number;
+  raw_multiple: number;
+  shrink_weight: number;
   median_tvl_usd: number;
 }
 
@@ -148,6 +168,8 @@ export interface BoardRow {
   implied_value_usd: number;
   model: {
     category_multiple: number;
+    category_multiple_raw: number;
+    shrink_weight: number;
     multiple_source: string;
     size_factor: number;
     size_reference_tvl_usd: number;
@@ -158,6 +180,7 @@ export interface BoardRow {
     age_days: number | null;
   };
   why: string;
+  comps: Comp[];
   farm_steps: string[];
 }
 
@@ -175,6 +198,8 @@ export interface RadarRow {
   age_days: number | null;
   implied_value_usd: number;
   category_multiple: number;
+  category_multiple_raw: number;
+  shrink_weight: number;
   multiple_source: string;
   size_factor: number;
   size_reference_tvl_usd: number;
@@ -182,6 +207,14 @@ export interface RadarRow {
   launch_multiplier: number;
   stablecoin_discount: number;
   why: string;
+  comps: Comp[];
+}
+
+/** One closest live comparable: a protocol that already trades, nearest by TVL, with its market-cap / TVL. */
+export interface Comp {
+  name: string;
+  ratio: number;
+  tvl_usd: number;
 }
 
 /** A live-token protocol: it already trades, so the board shows the market's own value. */
@@ -242,41 +275,51 @@ export function ageDays(asOf: string, listedAt: string | null): number | null {
   return Math.max(0, Math.floor((a - b) / DAY_MS));
 }
 
+/** The snapshot's live-token protocols: a token recorded, a positive TVL and a positive market cap. */
+export function liveProtocols(snapshot: Snapshot): SnapshotProtocol[] {
+  return snapshot.protocols.filter(
+    (p) => p.mcap_usd !== null && p.gecko_id !== null && p.symbol !== null && p.tvl_usd > 0 && p.mcap_usd > 0,
+  );
+}
+
 /**
  * The market's own multiples, read from the snapshot: for every category with
  * at least `min_live_for_category` live-token protocols, the median of their
  * market-cap / TVL ratios; plus the median across every live-token protocol,
  * which prices the categories too thin to price themselves. Clamped, so one
  * thin protocol with a huge market cap cannot set the multiple for its whole
- * category. Each multiple is priced at its category's median live TVL, and
- * the calibration also carries the market's own size exponent: the slope of
- * log market cap on log TVL across the live protocols, minus one. A slope
- * below one means the multiple shrinks as a protocol gets bigger, so the
- * exponent is negative; it is clamped to [-0.7, -0.1] and falls back to
- * -0.48 when the live set is too thin or too flat to fit.
+ * category. A thin category borrows strength from the market: the multiple
+ * actually used is shrunk toward the global median with weight
+ * n / (n + shrink_k) on the category's own median, so a category priced by
+ * 3 live protocols leans on the global median twice as hard as one priced
+ * by 7, and no single rich category carries the board on a handful of
+ * protocols. Each multiple is priced at its category's median live TVL, and
+ * the calibration also carries the market's own size exponent: the median
+ * pairwise slope of log market cap on log TVL across the live protocols
+ * (Theil-Sen), minus one. A median slope, so one 36x outlier cannot move
+ * it; it is clamped to [-0.7, -0.1] and falls back to -0.48 when the live
+ * set is too thin or too flat to fit.
  */
 export function calibrate(snapshot: Snapshot, model: ModelConstants = MODEL): Calibration {
-  const live = snapshot.protocols.filter(
-    (p) => p.mcap_usd !== null && p.gecko_id !== null && p.symbol !== null && p.tvl_usd > 0 && p.mcap_usd > 0,
-  );
+  const live = liveProtocols(snapshot);
   const clamp = (n: number): number => Math.min(model.multiple_cap, Math.max(model.multiple_floor, n));
   const global = clamp(median(live.map((p) => p.mcap_usd! / p.tvl_usd)));
   const globalMedianTvl = live.length > 0 ? median(live.map((p) => p.tvl_usd)) : 0;
-  // The size exponent, fit from the snapshot's own live protocols.
+  // The size exponent, fit from the snapshot's own live protocols: the
+  // median pairwise slope, so outliers cannot drag it.
   let sizeExponent = -0.48;
   if (live.length >= 10) {
-    const xs = live.map((p) => Math.log(p.tvl_usd));
-    const ys = live.map((p) => Math.log(p.mcap_usd!));
-    const mx = xs.reduce((a, b) => a + b, 0) / xs.length;
-    const my = ys.reduce((a, b) => a + b, 0) / ys.length;
-    let sxy = 0;
-    let sxx = 0;
-    for (let i = 0; i < xs.length; i++) {
-      sxy += (xs[i]! - mx) * (ys[i]! - my);
-      sxx += (xs[i]! - mx) ** 2;
+    const slopes: number[] = [];
+    for (let i = 0; i < live.length; i++) {
+      for (let j = i + 1; j < live.length; j++) {
+        const dx = Math.log(live[j]!.tvl_usd) - Math.log(live[i]!.tvl_usd);
+        if (Math.abs(dx) > 0.5) slopes.push((Math.log(live[j]!.mcap_usd!) - Math.log(live[i]!.mcap_usd!)) / dx);
+      }
     }
-    if (sxx > 0) {
-      const slope = sxy / sxx;
+    slopes.sort((a, b) => a - b);
+    if (slopes.length > 0) {
+      const mid = Math.floor(slopes.length / 2);
+      const slope = slopes.length % 2 === 1 ? slopes[mid]! : (slopes[mid - 1]! + slopes[mid]!) / 2;
       if (Number.isFinite(slope)) sizeExponent = Math.min(-0.1, Math.max(-0.7, round4(slope - 1)));
     }
   }
@@ -290,10 +333,14 @@ export function calibrate(snapshot: Snapshot, model: ModelConstants = MODEL): Ca
   const by_category: CategoryMultiple[] = [];
   for (const [category, protocols] of [...byCat.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
     if (protocols.length >= model.min_live_for_category) {
+      const raw = clamp(median(protocols.map((p) => p.mcap_usd! / p.tvl_usd)));
+      const w = protocols.length / (protocols.length + model.shrink_k);
       by_category.push({
         category,
         live_count: protocols.length,
-        multiple: clamp(median(protocols.map((p) => p.mcap_usd! / p.tvl_usd))),
+        multiple: round4(w * raw + (1 - w) * global),
+        raw_multiple: round4(raw),
+        shrink_weight: round4(w),
         median_tvl_usd: median(protocols.map((p) => p.tvl_usd)),
       });
     }
@@ -309,12 +356,19 @@ export function sizeReferenceTvl(category: string | null, calibration: Calibrati
   return calibration.global_median_tvl_usd > 0 ? calibration.global_median_tvl_usd : 1;
 }
 
-/** The multiple one category is priced at, and where the number came from. */
-export function multipleFor(category: string | null, calibration: Calibration): { multiple: number; source: string } {
+/** The multiple one category is priced at, and where the number came from: the shrunk multiple, the raw median behind it, and the shrinkage weight. */
+export function multipleFor(category: string | null, calibration: Calibration): { multiple: number; rawMultiple: number; shrinkWeight: number; source: string } {
   const key = category ?? 'Other';
   const hit = calibration.by_category.find((c) => c.category === key);
-  if (hit) return { multiple: hit.multiple, source: `median of ${hit.live_count} live ${key} protocols` };
-  return { multiple: calibration.global_multiple, source: 'global median (category too thin to price itself)' };
+  if (hit) {
+    return {
+      multiple: hit.multiple,
+      rawMultiple: hit.raw_multiple,
+      shrinkWeight: hit.shrink_weight,
+      source: `median of ${hit.live_count} live ${key} protocols, shrunk toward the global median (weight ${hit.shrink_weight.toFixed(2)} on the category median)`,
+    };
+  }
+  return { multiple: calibration.global_multiple, rawMultiple: calibration.global_multiple, shrinkWeight: 1, source: 'global median (category too thin to price itself)' };
 }
 
 /** Four decimal places: the rounding every multiplier is stored at, so the dashboard's recomputation lands on the same dollar. */
@@ -339,19 +393,18 @@ export function impliedValue(
   asOf: string,
   calibration: Calibration,
   model: ModelConstants = MODEL,
-): { implied: number; multiple: number; source: string; sizeFactor: number; sizeReferenceTvl: number; growthPct: number; growthMult: number; launchMult: number; discount: number; age: number | null } {
+): { implied: number; multiple: number; rawMultiple: number; shrinkWeight: number; source: string; sizeFactor: number; sizeReferenceTvl: number; growthPct: number; growthMult: number; launchMult: number; discount: number; age: number | null } {
   const age = ageDays(asOf, protocol.listed_at);
   const rawGrowth = finite(protocol.change_7d, 0);
   const growthPct = Math.min(model.growth_cap, Math.max(model.growth_floor, rawGrowth));
   const growthMult = round4(1 + (growthPct / 100) * model.growth_weight);
   const launchMult = launchMultiplier(age, model);
-  const { multiple: rawMultiple, source } = multipleFor(protocol.category, calibration);
-  const multiple = round4(rawMultiple);
+  const { multiple, rawMultiple, shrinkWeight, source } = multipleFor(protocol.category, calibration);
   const sizeRefTvl = sizeReferenceTvl(protocol.category, calibration);
   const sizeFactor = round4(Math.min(model.size_cap, Math.max(model.size_floor, Math.pow(protocol.tvl_usd / sizeRefTvl, calibration.size_exponent))));
   const discount = STABLECOIN_TICKER.test(protocol.name) ? model.stablecoin_discount : 1;
-  const implied = Math.max(1, Math.round(protocol.tvl_usd * multiple * sizeFactor * growthMult * launchMult * discount));
-  return { implied, multiple, source, sizeFactor, sizeReferenceTvl: sizeRefTvl, growthPct, growthMult, launchMult, discount, age };
+  const implied = Math.max(1, Math.round(protocol.tvl_usd * round4(multiple) * sizeFactor * growthMult * launchMult * discount));
+  return { implied, multiple: round4(multiple), rawMultiple: round4(rawMultiple), shrinkWeight, source, sizeFactor, sizeReferenceTvl: sizeRefTvl, growthPct, growthMult, launchMult, discount, age };
 }
 
 /** DefiLlama's version-marker rule: a name ending in a release is a pool of another protocol. */
@@ -392,6 +445,18 @@ function bySlug(protocols: SnapshotProtocol[]): Map<string, SnapshotProtocol> {
   return new Map(protocols.map((p) => [p.slug, p]));
 }
 
+/** The three live-token protocols nearest a protocol by TVL, in its own category when at least two trade there, else in the whole market: the comparables its multiple is priced against. A protocol trading above 3x its TVL is not a comparable for pricing — it is a legacy token on a shrunken TVL, not a market multiple — so the pool leaves those out; the median behind the multiple ignores them the same way. */
+export function closestComps(p: SnapshotProtocol, snapshot: Snapshot): Comp[] {
+  const live = liveProtocols(snapshot).filter((q) => q.mcap_usd! / q.tvl_usd <= 3);
+  const same = live.filter((q) => (q.category ?? 'Other') === (p.category ?? 'Other'));
+  const pool = same.length >= 2 ? same : live;
+  const target = Math.log(p.tvl_usd);
+  return [...pool]
+    .sort((a, b) => Math.abs(Math.log(a.tvl_usd) - target) - Math.abs(Math.log(b.tvl_usd) - target) || (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0))
+    .slice(0, 3)
+    .map((q) => ({ name: q.name, ratio: Math.round((q.mcap_usd! / q.tvl_usd) * 1000) / 1000, tvl_usd: q.tvl_usd }));
+}
+
 /** The protocols the board ranks, strongest first, with ranks 1..n. */
 export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): BoardRow[] {
   const calibration = calibrate(snapshot, model);
@@ -428,7 +493,9 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
     catSeen.set(key, n);
     catRank.set(s.p.slug, n);
   }
-  return scored.map((s, i) => ({
+  return scored.map((s, i) => {
+    const comps = closestComps(s.p, snapshot);
+    return {
     rank: i + 1,
     slug: s.p.slug,
     name: s.p.name,
@@ -445,6 +512,8 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
     implied_value_usd: s.implied,
     model: {
       category_multiple: round4(s.multiple),
+      category_multiple_raw: round4(s.rawMultiple),
+      shrink_weight: s.shrinkWeight,
       multiple_source: s.source,
       size_factor: round4(s.sizeFactor),
       size_reference_tvl_usd: s.sizeReferenceTvl,
@@ -454,9 +523,11 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
       stablecoin_discount: s.discount,
       age_days: s.age,
     },
-    why: whyFor(s.p, s, catRank.get(s.p.slug) ?? 1),
+    why: whyFor(s.p, s, catRank.get(s.p.slug) ?? 1, comps),
+    comps,
     farm_steps: farmSteps(s.p, s.age).map(stepText),
-  }));
+    };
+  });
 }
 
 /** One compact dollar figure, as the dashboard shows it. */
@@ -470,17 +541,20 @@ function fmtUsd(n: number): string {
 /** One line saying why a row ranks where it does, from its own numbers. */
 export function whyFor(
   p: SnapshotProtocol,
-  s: { multiple: number; source: string; sizeFactor: number; growthPct: number; launchMult: number; discount: number; age: number | null },
+  s: { multiple: number; rawMultiple: number; shrinkWeight: number; source: string; sizeFactor: number; growthPct: number; launchMult: number; discount: number; age: number | null },
   categoryRank: number,
+  comps: Comp[],
 ): string {
   const cat = p.category ?? 'Other';
   const head =
     categoryRank === 1
       ? `Largest pre-token ${cat} protocol at ${fmtUsd(p.tvl_usd)} TVL`
       : `${cat} protocol at ${fmtUsd(p.tvl_usd)} TVL, #${categoryRank} in its category by TVL`;
-  const pricing = s.source.includes('global')
+  const pricing = s.source.startsWith('global median')
     ? `priced at the global median x${s.multiple.toFixed(3)}`
-    : `priced at the ${cat} median x${s.multiple.toFixed(3)}`;
+    : s.shrinkWeight < 1
+      ? `priced at the ${cat} median x${s.rawMultiple.toFixed(3)}, shrunk to x${s.multiple.toFixed(3)}`
+      : `priced at the ${cat} median x${s.multiple.toFixed(3)}`;
   const size = s.sizeFactor < 1 ? `, discounted x${s.sizeFactor.toFixed(2)} for its size` : '';
   const ageText =
     s.age === null
@@ -491,8 +565,9 @@ export function whyFor(
           ? `${s.age}d with no token, in the launch window`
           : `${s.age}d with no token, past the usual launch window`;
   const growthText = p.change_7d === null ? '7d n/a' : `7d ${p.change_7d > 0 ? '+' : ''}${p.change_7d.toFixed(2)}%`;
-  const discountText = s.discount < 1 ? ' Its name is a stablecoin ticker, so only a future governance token is priced.' : '';
-  return `${head}, ${pricing}${size}. ${ageText}; ${growthText}.${discountText}`;
+  const discountText = s.discount < 1 ? ' Named after the asset it issues, so only a future governance token is priced.' : '';
+  const compsText = comps.length > 0 ? ` Live comps: ${comps.map((c) => `${c.name} ${c.ratio.toFixed(2)}x`).join(', ')}.` : '';
+  return `${head}, ${pricing}${size}. ${ageText}; ${growthText}.${discountText}${compsText}`;
 }
 
 /** A step as one string: its action, then its cost and time, within the gate's 20..600 characters. */
@@ -710,6 +785,8 @@ export function radarRow(row: BoardRow): RadarRow {
     age_days: row.age_days,
     implied_value_usd: row.implied_value_usd,
     category_multiple: row.model.category_multiple,
+    category_multiple_raw: row.model.category_multiple_raw,
+    shrink_weight: row.model.shrink_weight,
     multiple_source: row.model.multiple_source,
     size_factor: row.model.size_factor,
     size_reference_tvl_usd: row.model.size_reference_tvl_usd,
@@ -717,6 +794,7 @@ export function radarRow(row: BoardRow): RadarRow {
     launch_multiplier: row.model.launch_multiplier,
     stablecoin_discount: row.model.stablecoin_discount,
     why: row.why,
+    comps: row.comps,
   };
 }
 
